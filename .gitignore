@@ -1,0 +1,25 @@
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Coverage / test caches
+.coverage
+pytest.cache/
+.pytest_cache/
+
+# SAM build output
+.aws-sam/
+
+# Local environment files
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db

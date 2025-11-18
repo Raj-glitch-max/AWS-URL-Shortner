@@ -1,0 +1,134 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: AuroraLink Forge - Serverless URL shortener with analytics
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 10
+    MemorySize: 256
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        LINKS_TABLE_NAME: !Ref LinksTable
+        SHORT_DOMAIN: !Ref ShortDomain
+        DEFAULT_TTL_SECONDS: 604800
+        MAX_TTL_SECONDS: 31536000
+        ALLOW_CUSTOM_ALIAS: true
+        MAX_ALIAS_LENGTH: 24
+        MAX_URL_LENGTH: 2048
+        LOG_LEVEL: INFO
+        CLEANUP_BATCH_SIZE: 100
+    Tracing: Active
+
+Parameters:
+  ShortDomain:
+    Type: String
+    Default: https://auroralink.io
+
+Resources:
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowOrigin: "*"
+        AllowHeaders: "*"
+        AllowMethods: "OPTIONS,POST,GET"
+
+  CreateLinkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.create_link.handler
+      Events:
+        CreateLinkRoute:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /links
+            Method: post
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:GetItem
+              Resource: !GetAtt LinksTable.Arn
+
+  ResolveLinkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.resolve_link.handler
+      Events:
+        ResolveLinkRoute:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /{code}
+            Method: get
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LinksTable
+
+  LinkStatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.link_stats.handler
+      Events:
+        LinkStatsRoute:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /links/{code}/stats
+            Method: get
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref LinksTable
+
+  CleanupExpiredFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: handlers.cleanup_expired.handler
+      Timeout: 30
+      Events:
+        CleanupSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(15 minutes)
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LinksTable
+
+  LinksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      TableName: auroralinkforge-links
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for AuroraLink Forge API
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod
+  LinksTableName:
+    Description: DynamoDB table name
+    Value: !Ref LinksTable
